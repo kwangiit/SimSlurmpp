@@ -46,6 +46,11 @@ public class NetInit implements Control
 		Library.recvOverhead = recvOverhead;
 		Library.jobProcTime = jobProcTime;
 		Library.kvsProcTime = kvsProcTime;
+		
+		Library.preNoJobFinished = 0;
+		Library.numJobFinished = 0;
+		//public static int numAllJobs;
+		Library.numAllMsg = 0;
 		Library.jobMetaData = new HashMap<String, Job>();
 	}
 	
@@ -66,7 +71,7 @@ public class NetInit implements Control
 		{
 			e.printStackTrace();
 		}
-		
+		Library.numAllJobs = workloadAL.size();
 		int numNode = Network.size();
 		int numPart = numNode / partSize;
 		int numJobPerCtrl = workloadAL.size() / numPart;

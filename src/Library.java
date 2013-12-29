@@ -12,8 +12,8 @@ public class Library
 	
 	public static int preNoJobFinished;
 	public static int numJobFinished;
+	public static int numAllJobs;
 	public static long numAllMsg;
-	public static int numNodeRegist;
 	
 	public static HashMap<String, Job> jobMetaData;
 	

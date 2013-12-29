@@ -31,10 +31,10 @@ public class Resource
 			{
 				if (!(nodeLL.get(i).equals(dest.nodeLL.get(i))))
 				{
-					return 0;
+					return 1;
 				}
 			}
-			return 1;
+			return 0;
 		}
 	}
 }

@@ -41,7 +41,7 @@ public class PeerProtocol implements EDProtocol
 	public long msgCount;
 	public HashMap<Object, Object> hmData;
 	public int numCDRegist;
-	public int[] memList;
+	public String[] memList;
 	public Resource res;
 	public int numJobs;
 	public int numJobsStart;
@@ -49,7 +49,7 @@ public class PeerProtocol implements EDProtocol
 	public ArrayList<String> workload;
 	public double throughput;
 	
-	public HashMap<String, Integer> callbackTime;
+	public HashMap<String, Integer> callbackHM;
 	/* initialization
 	 * read the parameters from the configuration file
 	 */
@@ -65,12 +65,165 @@ public class PeerProtocol implements EDProtocol
 		this.maxNumTry = Configuration.getInt(prefix + "." + PARA_MAXNUMTRY);
 	}
 	
+	public long updateTime(long increment, long base)
+	{
+		if (CommonState.getTime() > base)
+		{
+			base = CommonState.getTime();
+		}
+		base += increment;
+		return base;
+	}
+	
+	public long timeCompOverride(long src, long dest)
+	{
+		if (src < dest)
+		{
+			src = dest;
+		}
+		return src;
+	}
+	
+	/* calculate how much time to wait for a message */
+	public long waitTimeCal(long endTime)
+	{
+		return endTime - CommonState.getTime();
+	}
+	
+	/* hash to the correct server */
+	public int hashServer(Object key)
+	{
+		int hashCode = key.hashCode();
+		return hashCode % memList.length;
+	}
+	
+	public void sendMsg(Message msg, long time)
+	{
+		byte[] msgByte = Library.serialize(msg);
+		long endTime = time + Library.getCommOverhead(msgByte.length);
+		EDSimulator.add(waitTimeCal(endTime), msg, Network.get(msg.destId), par.pid);
+	}
+	
+	public void regist(long wait)
+	{
+		String nodeName = "node-" + Integer.toString(id);
+		Message msg = new Message(id, ctrlId, "registration", nodeName);
+		sendMsg(msg, wait + Library.sendOverhead);
+	}
+
 	public void kvsClientInteract(Pair pair)
 	{
 		ctrlMaxFwdTime = updateTime(Library.sendOverhead, ctrlMaxFwdTime);
 		int destId = hashServer(pair.key);
 		Message msg = new Message(id, destId, "kvs", pair);
 		sendMsg(msg, ctrlMaxFwdTime);
+	}
+	
+	public void procRegistEvent(Message registMsg)
+	{
+		numCDRegist++;
+		ctrlMaxFwdTime = updateTime(Library.recvOverhead, ctrlMaxFwdTime);
+		res.numAvailNode++;
+		res.nodeLL.add(registMsg.content);
+		if (numCDRegist == partSize)
+		{
+			String key = "node-" + Integer.toString(id);
+			Pair resPair = new Pair(key, res, null, null, "insert", "insert resource");
+			kvsClientInteract(resPair);
+		}
+	}
+	
+	public KVSReturnObj procKVSEventAct(Pair pair)
+	{
+		KVSReturnObj kvsRetObj = new KVSReturnObj();
+		kvsRetObj.key = pair.key;
+		kvsRetObj.identifier = pair.identifier;
+		kvsRetObj.type = pair.type;
+		kvsRetObj.forWhat = pair.forWhat;
+		if (pair.type.equals("insert"))
+		{
+			hmData.put(pair.key, pair.value);
+			kvsRetObj.value = pair.value;
+			kvsRetObj.result = true;
+		}
+		else if (pair.type.equals("lookup"))
+		{
+			kvsRetObj.value = hmData.get(pair.key);
+			kvsRetObj.result = true;
+		}
+		else if (pair.type.equals("compare_and_swap"))
+		{
+			Object cur = hmData.get(pair.key);
+			if (cur.equals(pair.value))
+			{
+				hmData.put(pair.key, pair.attemptValue);
+				kvsRetObj.result = true;
+			}
+			else
+			{
+				kvsRetObj.result = false;
+			}
+			kvsRetObj.value = cur;
+		}
+		else if (pair.type.equals("callback"))
+		{
+			if (!callbackHM.containsKey(pair.key))
+			{
+				callbackHM.put((String)pair.key, 1);
+			}
+			else
+			{
+				int numTime = callbackHM.get((String)pair.key);
+				callbackHM.put((String)pair.key, numTime + 1);
+			}
+			String value = (String)hmData.get(pair.key);
+			if (value.equals("done"))
+			{
+				kvsRetObj.value = value;
+				kvsRetObj.result = true;
+			}
+			else
+			{
+				kvsRetObj.result = false;
+			}
+		}
+		return kvsRetObj;
+	}
+
+	public void procKVSEvent(Message msg)
+	{
+		Pair kvsPair = (Pair)msg.content;
+		if (!kvsPair.forWhat.equals("recheck callback"))
+		{
+			kvsMaxFwdTime = updateTime(Library.recvOverhead, kvsMaxFwdTime);
+			kvsMaxProcTime = timeCompOverride(kvsMaxProcTime, kvsMaxFwdTime);
+			kvsMaxProcTime = updateTime(Library.kvsProcTime, kvsMaxProcTime);
+		}
+		KVSReturnObj kvsRetObj = procKVSEventAct(kvsPair);
+		boolean needSend = true;
+		if (kvsRetObj.type == "callback" && !kvsRetObj.result)
+		{
+			if (callbackHM.get((String)kvsRetObj.key) > callbackNumTry)
+			{
+				callbackHM.remove((String)kvsRetObj.key);
+				needSend = true;
+			}
+			else
+			{
+				Pair cbReCheckPair = new Pair(kvsPair.key, kvsPair.value, 
+					kvsPair.attemptValue, kvsPair.identifier, kvsPair.type, "recheck callback");
+				Message recheckMsg = new Message(id, id, "kvs", cbReCheckPair);
+				EDSimulator.add(callbackInterval, recheckMsg, Network.get(id), par.pid);
+				needSend = false;
+			}
+		}
+		if (needSend)
+		{
+			kvsMaxFwdTime = timeCompOverride(kvsMaxFwdTime, kvsMaxProcTime);
+			kvsMaxFwdTime = updateTime(Library.sendOverhead, kvsMaxFwdTime);
+			Message retMsg = new Message(id, msg.sourceId, "kvs return", kvsRetObj);
+			sendMsg(retMsg, kvsMaxFwdTime);
+		}
 	}
 	
 	public String[] parseJob(String jobDesc)
@@ -101,16 +254,60 @@ public class PeerProtocol implements EDProtocol
 		job.exeTime = 0;
 		job.finTime = 0;
 		job.backTime = 0;
+		
 		Library.jobMetaData.put(job.jobId, job);
 		return job;
 	}
 	
+	public void executeJob(String jobId)
+	{
+		if (jobId.isEmpty())
+		{
+			ctrlMaxProcTime = updateTime(Library.jobProcTime, ctrlMaxProcTime);
+			String[] jobArray = parseJob(workload.get(numJobsStart));
+			Job job = createJob(jobArray);
+			jobId = job.jobId;
+		}
+		ctrlMaxFwdTime = timeCompOverride(ctrlMaxFwdTime, ctrlMaxProcTime);
+		String key = "node-" + Integer.toString(id);
+		Pair resPair = new Pair(key, null, null, jobId, "lookup", "lookup resource");
+		kvsClientInteract(resPair);
+	}
+	
+	public void splitResource(Resource initRes, Resource firstRes, Resource lastRes, int num)
+	{
+		firstRes.numAvailNode = num;
+		firstRes.nodeLL = (LinkedList<String>)(initRes.nodeLL.subList(0, num));
+		lastRes.numAvailNode = initRes.numAvailNode - num;
+		lastRes.nodeLL = (LinkedList<String>)(initRes.nodeLL.subList(num, initRes.numAvailNode));
+	}
+	
 	public void randSelect(String identifier)
 	{
-		int anoCtrlId = memList[CommonState.r.nextInt(memList.length)];
-		String key = Integer.toString(anoCtrlId);
-		Pair resPair = new Pair(key, null, null, identifier, "lookup", "lookup resource");
+		String anoCtrlId = memList[CommonState.r.nextInt(memList.length)];
+		Pair resPair = new Pair(anoCtrlId, null, null, identifier, "lookup", "lookup resource");
 		kvsClientInteract(resPair);
+	}
+	
+	public void releaseResLookup(KVSReturnObj kvsRetObj, int i)
+	{
+		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
+		if (job.ctrls.size() > 0)
+		{
+			String firstCtrl = job.ctrls.getFirst();
+			Pair pair = new Pair(firstCtrl.substring(5), null, null, job.jobId, 
+								"lookup", "release resource" + Integer.toString(i));
+			kvsClientInteract(pair);
+		}
+		else if (job.nodelist.size() > 0)
+		{
+			job.nodelist.clear();
+		}
+		if (i == 0)
+		{
+			Message msg = new Message(id, id, "reallocation", job.jobId);
+			EDSimulator.add(sleepLength, msg, Network.get(id), par.pid);
+		}
 	}
 	
 	public void allocateRes(KVSReturnObj kvsRetObj)
@@ -144,24 +341,93 @@ public class PeerProtocol implements EDProtocol
 		}
 	}
 	
-	public void releaseResLookup(KVSReturnObj kvsRetObj, int i)
+	public void procKVSRetEvent(Message msg)
 	{
-		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
-		if (job.ctrls.size() > 0)
+		ctrlMaxFwdTime = updateTime(Library.recvOverhead, ctrlMaxFwdTime);
+		KVSReturnObj kvsRetObj = (KVSReturnObj)msg.content;
+		if (!kvsRetObj.result)
 		{
-			String firstCtrl = job.ctrls.getFirst();
-			Pair pair = new Pair(firstCtrl.substring(5), null, null, job.jobId, 
-								"lookup", "release resource" + Integer.toString(i));
-			kvsClientInteract(pair);
+			if (kvsRetObj.type.equals("compare_and_swap"))
+			{
+				if (kvsRetObj.forWhat.equals("allocate resource"))
+				{
+					allocateRes(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.equals("release resource"))
+				{
+					releaseResCswap(kvsRetObj);
+				}
+			}
+			else
+			{
+				Pair pair = new Pair(kvsRetObj.key, kvsRetObj.value, null, 
+						kvsRetObj.identifier, kvsRetObj.type, kvsRetObj.forWhat);
+				kvsClientInteract(pair);
+			}
 		}
-		else if (job.nodelist.size() > 0)
+		else
 		{
-			job.nodelist.clear();
-		}
-		if (i == 0)
-		{
-			Message msg = new Message(id, id, "reallocation", job.jobId);
-			EDSimulator.add(sleepLength, msg, Network.get(id), par.pid);
+			if (kvsRetObj.type.equals("compare_and_swap"))
+			{
+				if (kvsRetObj.forWhat.equals("allocate resource"))
+				{
+					cswapAllocResSuc(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.startsWith("release resource"))//kvsRetObj.forWhat.equals("release resource"))
+				{
+					char releaseType = kvsRetObj.forWhat.charAt(kvsRetObj.forWhat.length() - 1);
+					if (releaseType == '0')
+					{
+						releaseResLookup(kvsRetObj, 0);
+					}
+					else
+					{
+						releaseResLookup(kvsRetObj, 1);
+					}
+				}
+			}
+			else if (kvsRetObj.type.equals("insert"))
+			{
+				if (kvsRetObj.forWhat.equals("insert resource"))
+				{
+					executeJob(new String());
+				}
+				if (kvsRetObj.forWhat.equals("job origin ctrl"))
+				{
+					insertJobCtrls(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.equals("job ctrls"))
+				{
+					insertJobCtrlNodelist(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.equals("job ctrl nodelist"))
+				{
+					insertJobCtrlNodelist(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.equals("notify job fin"))
+				{
+					releaseResLookup(kvsRetObj, 1);
+				}
+			}
+			else if (kvsRetObj.type.equals("lookup"))
+			{
+				if (kvsRetObj.forWhat.equals("lookup resource"))
+				{
+					allocateRes(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.startsWith("release resource"))
+				{
+					releaseResCswap(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.equals("job origin ctrl"))
+				{
+					jobOriginCtrlMsgProc(kvsRetObj);
+				}
+			}
+			else if (kvsRetObj.type.equals("callback"))
+			{
+				callbackSuc(kvsRetObj);
+			}
 		}
 	}
 	
@@ -175,14 +441,6 @@ public class PeerProtocol implements EDProtocol
 		Pair pair = new Pair(kvsRetObj.key, seenRes, attemptRes, 
 				kvsRetObj.identifier, "compare and swap", kvsRetObj.forWhat);
 		kvsClientInteract(pair);
-	}
-	
-	public void splitResource(Resource initRes, Resource firstRes, Resource lastRes, int num)
-	{
-		firstRes.numAvailNode = num;
-		firstRes.nodeLL = (LinkedList<String>)(initRes.nodeLL.subList(0, num));
-		lastRes.numAvailNode = initRes.numAvailNode - num;
-		lastRes.nodeLL = (LinkedList<String>)(initRes.nodeLL.subList(num, initRes.numAvailNode));
 	}
 	
 	public void mergeResource(Resource firstRes, Resource secRes)
@@ -480,225 +738,6 @@ public class PeerProtocol implements EDProtocol
 		}
 	}
 	
-	public void executeJob(String jobId)
-	{
-		if (jobId.isEmpty())
-		{
-			ctrlMaxProcTime = updateTime(Library.jobProcTime, ctrlMaxProcTime);
-			String[] jobArray = parseJob(workload.get(numJobsStart));
-			Job job = createJob(jobArray);
-			jobId = job.jobId;
-		}
-		ctrlMaxFwdTime = timeCompOverride(ctrlMaxFwdTime, ctrlMaxProcTime);
-		String key = Integer.toString(id);
-		Pair resPair = new Pair(key, null, null, jobId, "lookup", "lookup resource");
-		kvsClientInteract(resPair);
-	}
-	
-	public void procRegistEvent(Message registMsg)
-	{
-		numCDRegist++;
-		ctrlMaxFwdTime = updateTime(Library.recvOverhead, ctrlMaxFwdTime);
-		res.numAvailNode++;
-		res.nodeLL.add(Integer.toString(registMsg.sourceId));
-		if (numCDRegist == partSize)
-		{
-			String key = Integer.toString(id);
-			Pair resPair = new Pair(key, res, null, null, "insert", "insert resource");
-			kvsClientInteract(resPair);
-		}
-	}
-	
-	public KVSReturnObj procKVSEventAct(Pair pair)
-	{
-		KVSReturnObj kvsRetObj = new KVSReturnObj();
-		kvsRetObj.key = pair.key;
-		kvsRetObj.identifier = pair.identifier;
-		kvsRetObj.type = pair.type;
-		kvsRetObj.forWhat = pair.forWhat;
-		if (pair.type.equals("insert"))
-		{
-			hmData.put(pair.key, pair.value);
-			kvsRetObj.value = pair.value;
-			kvsRetObj.result = true;
-		}
-		else if (pair.type.equals("lookup"))
-		{
-			kvsRetObj.value = hmData.get(pair.key);
-			kvsRetObj.result = true;
-		}
-		else if (pair.type.equals("compare_and_swap"))
-		{
-			Object cur = hmData.get(pair.key);
-			if (cur.equals(pair.value))
-			{
-				hmData.put(pair.key, pair.attemptValue);
-				kvsRetObj.result = true;
-			}
-			else
-			{
-				kvsRetObj.result = false;
-			}
-			kvsRetObj.value = cur;
-		}
-		else if (pair.type.equals("callback"))
-		{
-			if (!callbackTime.containsKey(pair.key))
-			{
-				callbackTime.put((String)pair.key, 1);
-			}
-			else
-			{
-				int numTime = callbackTime.get((String)pair.key);
-				callbackTime.put((String)pair.key, numTime + 1);
-			}
-			String value = (String)hmData.get(pair.key);
-			if (value.equals("done"))
-			{
-				kvsRetObj.value = value;
-				kvsRetObj.result = true;
-			}
-			else
-			{
-				kvsRetObj.result = false;
-			}
-		}
-		return kvsRetObj;
-	}
-	
-	public void sendMsg(Message msg, long time)
-	{
-		byte[] msgByte = Library.serialize(msg);
-		long endTime = time + Library.getCommOverhead(msgByte.length);
-		EDSimulator.add(waitTimeCal(endTime), msg, Network.get(msg.destId), par.pid);
-	}
-	
-	public void procKVSEvent(Message msg)
-	{
-		Pair kvsPair = (Pair)msg.content;
-		if (!kvsPair.forWhat.equals("recheck callback"))
-		{
-			kvsMaxFwdTime = updateTime(Library.recvOverhead, kvsMaxFwdTime);
-			kvsMaxProcTime = timeCompOverride(kvsMaxProcTime, kvsMaxFwdTime);
-			kvsMaxProcTime = updateTime(Library.kvsProcTime, kvsMaxProcTime);
-		}
-		KVSReturnObj kvsRetObj = procKVSEventAct(kvsPair);
-		boolean needSend = true;
-		if (kvsRetObj.type == "callback" && !kvsRetObj.result)
-		{
-			if (callbackTime.get((String)kvsRetObj.key) > callbackNumTry)
-			{
-				callbackTime.remove((String)kvsRetObj.key);
-				needSend = true;
-			}
-			else
-			{
-				Pair cbReCheckPair = new Pair(kvsPair.key, kvsPair.value, 
-					kvsPair.attemptValue, kvsPair.identifier, kvsPair.type, "recheck callback");
-				Message recheckMsg = new Message(id, id, "kvs", cbReCheckPair);
-				EDSimulator.add(callbackInterval, recheckMsg, Network.get(id), par.pid);
-				needSend = false;
-			}
-		}
-		if (needSend)
-		{
-			kvsMaxFwdTime = timeCompOverride(kvsMaxFwdTime, kvsMaxProcTime);
-			kvsMaxFwdTime = updateTime(Library.sendOverhead, kvsMaxFwdTime);
-			Message retMsg = new Message(id, msg.sourceId, "kvs return", kvsRetObj);
-			sendMsg(retMsg, kvsMaxFwdTime);
-		}
-	}
-	
-	public void procKVSRetEvent(Message msg)
-	{
-		ctrlMaxFwdTime = updateTime(Library.recvOverhead, ctrlMaxFwdTime);
-		KVSReturnObj kvsRetObj = (KVSReturnObj)msg.content;
-		if (!kvsRetObj.result)
-		{
-			if (kvsRetObj.type.equals("compare_and_swap"))
-			{
-				if (kvsRetObj.forWhat.equals("allocate resource"))
-				{
-					allocateRes(kvsRetObj);
-				}
-				if (kvsRetObj.forWhat.equals("release resource"))
-				{
-					releaseResCswap(kvsRetObj);
-				}
-			}
-			else
-			{
-				Pair pair = new Pair(kvsRetObj.key, kvsRetObj.value, null, 
-						kvsRetObj.identifier, kvsRetObj.type, kvsRetObj.forWhat);
-				kvsClientInteract(pair);
-			}
-		}
-		else
-		{
-			if (kvsRetObj.type.equals("compare_and_swap"))
-			{
-				if (kvsRetObj.forWhat.equals("allocate resource"))
-				{
-					cswapAllocResSuc(kvsRetObj);
-				}
-				if (kvsRetObj.forWhat.startsWith("release resource"))//kvsRetObj.forWhat.equals("release resource"))
-				{
-					char releaseType = kvsRetObj.forWhat.charAt(kvsRetObj.forWhat.length() - 1);
-					if (releaseType == '0')
-					{
-						releaseResLookup(kvsRetObj, 0);
-					}
-					else
-					{
-						releaseResLookup(kvsRetObj, 1);
-					}
-				}
-			}
-			else if (kvsRetObj.type.equals("insert"))
-			{
-				if (kvsRetObj.forWhat.equals("insert resource"))
-				{
-					executeJob(new String());
-				}
-				if (kvsRetObj.forWhat.equals("job origin ctrl"))
-				{
-					insertJobCtrls(kvsRetObj);
-				}
-				if (kvsRetObj.forWhat.equals("job ctrls"))
-				{
-					insertJobCtrlNodelist(kvsRetObj);
-				}
-				if (kvsRetObj.forWhat.equals("job ctrl nodelist"))
-				{
-					insertJobCtrlNodelist(kvsRetObj);
-				}
-				if (kvsRetObj.forWhat.equals("notify job fin"))
-				{
-					releaseResLookup(kvsRetObj, 1);
-				}
-			}
-			else if (kvsRetObj.type.equals("lookup"))
-			{
-				if (kvsRetObj.forWhat.equals("lookup resource"))
-				{
-					allocateRes(kvsRetObj);
-				}
-				if (kvsRetObj.forWhat.startsWith("release resource"))
-				{
-					releaseResCswap(kvsRetObj);
-				}
-				if (kvsRetObj.forWhat.equals("job origin ctrl"))
-				{
-					jobOriginCtrlMsgProc(kvsRetObj);
-				}
-			}
-			else if (kvsRetObj.type.equals("callback"))
-			{
-				callbackSuc(kvsRetObj);
-			}
-		}
-	}
-	
 	public void processEvent(Node node, int pid, Object event)
 	{
 		Message msg = (Message)event;
@@ -753,43 +792,5 @@ public class PeerProtocol implements EDProtocol
 		return pp;
 	}
 	
-	public void regist(long wait)
-	{
-		String nodeName = "node-" + Integer.toString(id);
-		Message msg = new Message(id, ctrlId, "registration", nodeName);
-		sendMsg(msg, wait + Library.sendOverhead);
-	}
 
-	
-	public long updateTime(long increment, long base)
-	{
-		if (CommonState.getTime() > base)
-		{
-			base = CommonState.getTime();
-		}
-		base += increment;
-		return base;
-	}
-	
-	public long timeCompOverride(long src, long dest)
-	{
-		if (src < dest)
-		{
-			src = dest;
-		}
-		return src;
-	}
-	
-	/* calculate how much time to wait for a message */
-	public long waitTimeCal(long endTime)
-	{
-		return endTime - CommonState.getTime();
-	}
-	
-	/* hash to the correct server */
-	public int hashServer(Object key)
-	{
-		int hashCode = key.hashCode();
-		return hashCode % memList.length;
-	}
 }

@@ -79,29 +79,32 @@ public class NetInit implements Control
 			pp.ctrlId = i / partSize * partSize;
 			if (i % partSize == 0)
 			{
-				pp.memList = new int[numPart];
+				pp.ctrlMaxProcTime = 0;
+				pp.ctrlMaxFwdTime = 0;
+				pp.kvsMaxProcTime = 0;
+				pp.kvsMaxFwdTime = 0;
+				pp.msgCount = 0;
+				pp.hmData = new HashMap<Object, Object>();
+				pp.numCDRegist = 0;
+				pp.memList = new String[numPart];
 				for (int j = 0; j < numPart; j++)
 				{
-					pp.memList[j] = j * numPart;
+					pp.memList[j] = "node-" + Integer.toString(j * numPart);
 				}
+				pp.res = new Resource();
 				pp.numJobs = numJobPerCtrl;
+				pp.numJobsStart = 0;
+				pp.numJobsFin = 0;
 				pp.workload = new ArrayList<String>();
 				for (int j = 0; j < numJobPerCtrl; j++)
 				{
 					pp.workload.add(workloadAL.get(i / partSize * numJobPerCtrl + j));
 				}
-				pp.numJobsStart = 0;
-				pp.numJobsFin = 0;
-				pp.hmData = new HashMap<Object, Object>();
-				pp.msgCount = 0;
-				pp.ctrlMaxProcTime = 0;
-				pp.ctrlMaxFwdTime = 0;
-				pp.kvsMaxProcTime = 0;
-				pp.kvsMaxFwdTime = 0;
-				pp.res = new Resource();
-				pp.callbackTime = new HashMap<String, Integer>();
+				pp.throughput = 0;
+				pp.callbackHM = new HashMap<String, Integer>();
 			}
-			
+			pp.cdMaxProcTime = 0;
+			pp.cdMaxFwdTime = 0;
 		}
 	}
 	

@@ -289,6 +289,10 @@ public class PeerProtocol implements EDProtocol
 		kvsClientInteract(resPair);
 	}
 	
+	/* lookup for releasing resources 
+	 * i = 0 means releasing resources after a job cannot be satisfied
+	 * i = 1 means releasing resources after finishing a job
+	 * */
 	public void releaseResLookup(KVSReturnObj kvsRetObj, int i)
 	{
 		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
@@ -299,14 +303,17 @@ public class PeerProtocol implements EDProtocol
 								"lookup", "release resource" + Integer.toString(i));
 			kvsClientInteract(pair);
 		}
-		else if (job.nodelist.size() > 0)
-		{
-			job.nodelist.clear();
-		}
-		if (i == 0)
-		{
-			Message msg = new Message(id, id, "reallocation", job.jobId);
-			EDSimulator.add(sleepLength, msg, Network.get(id), par.pid);
+		else 
+		{	
+			if (job.nodelist.size() > 0)
+			{
+				job.nodelist.clear();
+			}
+			if (i == 0)
+			{
+				Message msg = new Message(id, id, "reallocation", job.jobId);
+				EDSimulator.add(sleepLength, msg, Network.get(id), par.pid);
+			}
 		}
 	}
 	
@@ -327,7 +334,7 @@ public class PeerProtocol implements EDProtocol
 										"compare and swap", "allocate resource");
 			kvsClientInteract(cswapPair);
 		}
-		else
+		else	// there are no more available nodes for the selected controller
 		{
 			job.numTry++;
 			if (job.numTry < maxNumTry)
@@ -339,6 +346,73 @@ public class PeerProtocol implements EDProtocol
 				releaseResLookup(kvsRetObj, 0);
 			}
 		}
+	}
+	
+	public void mergeResource(Resource firstRes, Resource secRes)
+	{
+		firstRes.numAvailNode += secRes.numAvailNode;
+		for (int i = 0; i < secRes.numAvailNode; i++)
+		{
+			firstRes.nodeLL.add(secRes.nodeLL.get(i));
+		}
+	}
+	
+	public void releaseResCswap(KVSReturnObj kvsRetObj)
+	{
+		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
+		Resource seenRes = (Resource)kvsRetObj.value;
+		Resource attemptRes = new Resource();
+		mergeResource(attemptRes, seenRes);
+		mergeResource(attemptRes, job.ctrlNodelist.getFirst());
+		Pair pair = new Pair(kvsRetObj.key, seenRes, attemptRes, 
+				kvsRetObj.identifier, "compare and swap", kvsRetObj.forWhat);
+		kvsClientInteract(pair);
+	}
+	
+	/* insert (jobid, origin controller id) */
+	public void insertJobOriginCtrl(Job job)
+	{
+		Pair jobOriginCtrlPair = new Pair(job.jobId, "node-" + Integer.toString(id), 
+										null, job.jobId, "insert", "job origin ctrl");
+		kvsClientInteract(jobOriginCtrlPair);
+	}
+	
+	public void cswapAllocResSuc(KVSReturnObj kvsRetObj)
+	{
+		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
+		int pos = job.ctrls.indexOf(job.ctrlBackup);
+		if (pos == -1)
+		{
+			job.ctrls.add(job.ctrlBackup);
+			job.ctrlNodelist.add(job.resBackup);
+		}
+		else
+		{
+			Resource res = job.ctrlNodelist.get(pos);
+			mergeResource(res, job.resBackup);
+		}
+		for (int i = 0; i < job.resBackup.numAvailNode; i++)
+		{
+			job.nodelist.add(job.resBackup.nodeLL.get(i));
+		}
+		if (job.nodelist.size() < job.numNodeRequired)
+		{
+			randSelect(job.jobId);
+		}
+		else
+		{
+			executeJob(new String());	//start to handle the next job
+			insertJobOriginCtrl(job);
+		}
+	}
+	
+	/* insert (jobid + origin controller id, involved controller list) */
+	public void insertJobCtrls(KVSReturnObj kvsRetObj)
+	{
+		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
+		String key = job.jobId + "node-" + Integer.toString(id);
+		Pair jobCtrlsPair = new Pair(key, job.ctrls, null, job.jobId, "insert", "job ctrls");
+		kvsClientInteract(jobCtrlsPair);
 	}
 	
 	public void procKVSRetEvent(Message msg)
@@ -353,7 +427,7 @@ public class PeerProtocol implements EDProtocol
 				{
 					allocateRes(kvsRetObj);
 				}
-				if (kvsRetObj.forWhat.equals("release resource"))
+				if (kvsRetObj.forWhat.startsWith("release resource"))
 				{
 					releaseResCswap(kvsRetObj);
 				}
@@ -373,7 +447,7 @@ public class PeerProtocol implements EDProtocol
 				{
 					cswapAllocResSuc(kvsRetObj);
 				}
-				if (kvsRetObj.forWhat.startsWith("release resource"))//kvsRetObj.forWhat.equals("release resource"))
+				if (kvsRetObj.forWhat.startsWith("release resource"))
 				{
 					char releaseType = kvsRetObj.forWhat.charAt(kvsRetObj.forWhat.length() - 1);
 					if (releaseType == '0')
@@ -396,7 +470,7 @@ public class PeerProtocol implements EDProtocol
 				{
 					insertJobCtrls(kvsRetObj);
 				}
-				if (kvsRetObj.forWhat.equals("job ctrls"))
+				if (kvsRetObj.forWhat.equals("job ctrls"))	// This is where I left last time
 				{
 					insertJobCtrlNodelist(kvsRetObj);
 				}
@@ -428,27 +502,6 @@ public class PeerProtocol implements EDProtocol
 			{
 				callbackSuc(kvsRetObj);
 			}
-		}
-	}
-	
-	public void releaseResCswap(KVSReturnObj kvsRetObj)
-	{
-		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
-		Resource seenRes = (Resource)kvsRetObj.value;
-		Resource attemptRes = new Resource();
-		mergeResource(attemptRes, seenRes);
-		mergeResource(attemptRes, job.ctrlNodelist.getFirst());
-		Pair pair = new Pair(kvsRetObj.key, seenRes, attemptRes, 
-				kvsRetObj.identifier, "compare and swap", kvsRetObj.forWhat);
-		kvsClientInteract(pair);
-	}
-	
-	public void mergeResource(Resource firstRes, Resource secRes)
-	{
-		firstRes.numAvailNode += secRes.numAvailNode;
-		for (int i = 0; i < secRes.numAvailNode; i++)
-		{
-			firstRes.nodeLL.add(secRes.nodeLL.get(i));
 		}
 	}
 	
@@ -661,20 +714,9 @@ public class PeerProtocol implements EDProtocol
 		}
 	}
 	
-	public void insertJobOriginCtrl(Job job)
-	{
-		Pair jobOriginCtrlPair = new Pair(job.jobId, "node-" + Integer.toString(id), 
-										null, job.jobId, "insert", "job origin ctrl");
-		kvsClientInteract(jobOriginCtrlPair);
-	}
+
 	
-	public void insertJobCtrls(KVSReturnObj kvsRetObj)
-	{
-		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
-		String key = job.jobId + "node-" + Integer.toString(id);
-		Pair jobCtrlsPair = new Pair(key, job.ctrls, null, job.jobId, "insert", "job ctrls");
-		kvsClientInteract(jobCtrlsPair);
-	}
+
 	
 	public void insertJobCtrlNodelist(KVSReturnObj kvsRetObj)
 	{
@@ -708,35 +750,7 @@ public class PeerProtocol implements EDProtocol
 		}
 	}
 	
-	public void cswapAllocResSuc(KVSReturnObj kvsRetObj)
-	{
-		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
-		int pos = job.ctrls.indexOf(job.ctrlBackup);
-		if (pos == -1)
-		{
-			job.ctrls.add(job.ctrlBackup);
-			job.ctrlNodelist.add(job.resBackup);
-		}
-		else
-		{
-			Resource res = job.ctrlNodelist.get(pos);
-			mergeResource(res, job.resBackup);
-			res.numAvailNode += job.resBackup.numAvailNode;
-		}
-		for (int i = 0; i < job.resBackup.numAvailNode; i++)
-		{
-			job.nodelist.add(job.resBackup.nodeLL.get(i));
-		}
-		if (job.nodelist.size() < job.numNodeRequired)
-		{
-			randSelect(job.jobId);
-		}
-		else
-		{
-			executeJob(new String());
-			insertJobOriginCtrl(job);
-		}
-	}
+
 	
 	public void processEvent(Node node, int pid, Object event)
 	{

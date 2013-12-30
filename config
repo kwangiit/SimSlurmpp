@@ -1,0 +1,41 @@
+simulation.endtime 10^10
+simulation.logtime 10^10
+simulation.experiments 1
+
+network.size 10
+
+protocol.tr UniformRandomTransport
+{
+    mindelay 7912
+    maxdelay 7912
+}
+
+protocol.peer PeerProtocol
+{
+    transport tr
+    partSize 10
+    sleepLength 1000
+    callbackInterval 1000
+    callbackNumTry 3
+    maxNumTry 3
+}
+
+init.create NetInit
+{
+    protocol peer
+    partSize 10
+    netSpeed 1000000000
+    latency 100
+    sendOverhead 50
+    recvOverhead 50
+    jobProcTime 1000
+    kvsProcTime 1000
+    workloadFile /home/kwang/workspace/SimDJL/SimDJL/workload
+}
+
+control.start TrafficGene
+{
+    protocol peer
+    waitTimeFile /home/kwang/workspace/SimDJL/SimDJL/waittime
+    step simulation.endtime
+}

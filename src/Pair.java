@@ -1,5 +1,6 @@
+import java.io.Serializable;
 
-public class Pair 
+public class Pair implements Serializable 
 {
 	Object key;
 	Object value;

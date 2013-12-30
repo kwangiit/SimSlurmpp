@@ -1,4 +1,6 @@
-public class KVSReturnObj 
+import java.io.Serializable;
+
+public class KVSReturnObj implements Serializable 
 {
 	Object key;
 	Object value;

@@ -34,9 +34,12 @@ public class TrafficGene implements Control
 		try
 		{
 			long wait = 0;
+			String line = null;
 			for (int i = 0; i < numNode; i++)
 			{
-				wait = Long.parseLong(br.readLine());
+				line = br.readLine();
+				System.out.println("The wait time is:" + line);
+				wait = Long.parseLong(line);
 				Comparator comp = new Comparator(wait, i);
 				ts.add(comp);
 			}

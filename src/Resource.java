@@ -1,6 +1,7 @@
 import java.util.LinkedList;
+import java.io.Serializable;
 
-public class Resource 
+public class Resource implements Serializable
 {
 	int numAvailNode;
 	LinkedList<String> nodeLL;

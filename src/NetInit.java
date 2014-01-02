@@ -94,7 +94,7 @@ public class NetInit implements Control
 				pp.memList = new String[numPart];
 				for (int j = 0; j < numPart; j++)
 				{
-					pp.memList[j] = "node-" + Integer.toString(j * numPart);
+					pp.memList[j] = "node-" + Integer.toString(j * partSize);
 				}
 				pp.res = new Resource();
 				pp.numJobs = numJobPerCtrl;

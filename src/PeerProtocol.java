@@ -93,7 +93,7 @@ public class PeerProtocol implements EDProtocol
 	/* hash to the correct server */
 	public int hashServer(Object key)
 	{
-		int hashCode = key.hashCode();
+		int hashCode = Math.abs(key.hashCode());
 		return hashCode % memList.length;
 	}
 	
@@ -123,7 +123,7 @@ public class PeerProtocol implements EDProtocol
 	{
 		if (numJobsFin == workload.size())
 		{
-			System.out.println("The throughput is:" + (double)numJobsFin 
+			System.out.println("The throughput of controller " + id + " is:" + (double)numJobsFin 
 					/ (double)ctrlMaxFwdTime * 1E6);
 		}
 		if (Library.numJobFinished == Library.numAllJobs)
@@ -141,7 +141,6 @@ public class PeerProtocol implements EDProtocol
 		res.nodeLL.add((String)registMsg.content);
 		if (numCDRegist == partSize)
 		{
-			System.out.println("Now, start to insert resource!");
 			String key = "node-" + Integer.toString(id);
 			Pair resPair = new Pair(key, res, null, null, "insert", "insert resource");
 			kvsClientInteract(resPair);
@@ -168,17 +167,15 @@ public class PeerProtocol implements EDProtocol
 		}
 		else if (pair.type.equals("compare and swap"))
 		{
-			Object cur = hmData.get(pair.key);
-			if (cur.equals(pair.value))
+			Resource cur = (Resource)hmData.get(pair.key);
+			if (cur.comResource((Resource)pair.value) == 0)
 			{
 				hmData.put(pair.key, pair.attemptValue);
-				System.out.println("OK, success!");
 				kvsRetObj.result = true;
 			}
 			else
 			{
 				kvsRetObj.result = false;
-				
 			}
 			kvsRetObj.value = cur;
 		}
@@ -194,7 +191,7 @@ public class PeerProtocol implements EDProtocol
 				callbackHM.put((String)pair.key, numTime + 1);
 			}
 			String value = (String)hmData.get(pair.key);
-			if (value.equals("done"))
+			if (value != null && value.equals("done"))
 			{
 				kvsRetObj.value = value;
 				kvsRetObj.result = true;
@@ -229,7 +226,7 @@ public class PeerProtocol implements EDProtocol
 			{
 				Pair cbReCheckPair = new Pair(kvsPair.key, kvsPair.value, 
 					kvsPair.attemptValue, kvsPair.identifier, kvsPair.type, "recheck callback");
-				Message recheckMsg = new Message(id, id, "kvs", cbReCheckPair);
+				Message recheckMsg = new Message(msg.sourceId, id, "kvs", cbReCheckPair);
 				EDSimulator.add(callbackInterval, recheckMsg, Network.get(id), par.pid);
 				needSend = false;
 			}
@@ -270,7 +267,6 @@ public class PeerProtocol implements EDProtocol
 				job.argv += " ";
 			}
 		}
-		System.out.println("The sleep length is:" + job.argv);
 		job.nodelist = new LinkedList<String>();
 		job.ctrls = new LinkedList<String>();
 		job.ctrlNodelist = new LinkedList<Resource>();
@@ -290,7 +286,6 @@ public class PeerProtocol implements EDProtocol
 	{
 		if (jobId.isEmpty())
 		{
-			System.out.println("Now, I am starting a job!");
 			ctrlMaxProcTime = updateTime(Library.jobProcTime, ctrlMaxProcTime);
 			String[] jobArray = parseJob(workload.get(numJobsStart));
 			Job job = createJob(jobArray);
@@ -332,16 +327,25 @@ public class PeerProtocol implements EDProtocol
 		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
 		if (job.ctrls.size() > 0)
 		{
-			System.out.println("The number of controllers is:" + job.ctrls.size());
 			String firstCtrl = job.ctrls.getFirst();
 			Pair pair = new Pair(firstCtrl, null, null, job.jobId, 
 								"lookup", "release resource" + Integer.toString(i));
 			kvsClientInteract(pair);
+			for (int j = 0; j < job.ctrls.size(); j++)
+			{
+				System.out.println(job.ctrls.get(j));
+			}
 		}
 		else 
-		{	
+		{
+			System.out.println("the job id is:" + job.jobId + "number of jobs fin is:" + numJobsFin + "current node is:" + id + "key is:" + kvsRetObj.key);
 			if (job.nodelist.size() > 0)
 			{
+				for (int j = 0; j < job.nodelist.size(); j++)
+				{
+					System.out.println("job node list is:" + job.nodelist.get(j));
+				}
+				System.out.println();
 				job.nodelist.clear();
 			}
 			if (i == 0)
@@ -351,7 +355,20 @@ public class PeerProtocol implements EDProtocol
 			}
 			if (i == 1)
 			{
-				printOutResult();
+				int jobClientId = Integer.parseInt(job.jobId.split(" ")[0].substring(5));
+				if (id == jobClientId)
+				{
+					System.out.println(id + "\t" + jobClientId + "\t" + job.jobId);
+					numJobsFin++;
+					Library.numJobFinished++;
+					printOutResult();
+				}
+				else
+				{
+					Pair pair = new Pair(kvsRetObj.identifier + "Fin", "done", 
+							null, kvsRetObj.identifier, "insert", "notify job fin");
+					kvsClientInteract(pair);
+				}
 			}
 		}
 	}
@@ -360,19 +377,15 @@ public class PeerProtocol implements EDProtocol
 	{
 		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
 		int numMoreNodeRequired = job.numNodeRequired - job.nodelist.size();
-		System.out.println(numMoreNodeRequired);
 		job.ctrlBackup = null; job.resBackup.numAvailNode = 0; job.resBackup.nodeLL.clear();
 		Resource seenRes = (Resource)kvsRetObj.value;
-		System.out.println("seen value is:" + seenRes.numAvailNode);
 		int numNodeAllocated = seenRes.numAvailNode >= numMoreNodeRequired ? 
 				numMoreNodeRequired : seenRes.numAvailNode;
-		System.out.println("num node allocated is:" + numNodeAllocated);
 		if (numNodeAllocated > 0)
 		{
 			Resource attemptRes = new Resource();
 			splitResource(seenRes, job.resBackup, attemptRes, numNodeAllocated);
 			job.ctrlBackup = (String)kvsRetObj.key;
-			System.out.println("The key is:" + job.ctrlBackup);
 			Pair cswapPair = new Pair(kvsRetObj.key, kvsRetObj.value, attemptRes, job.jobId,
 										"compare and swap", "allocate resource");
 			kvsClientInteract(cswapPair);
@@ -386,6 +399,7 @@ public class PeerProtocol implements EDProtocol
 			}
 			else
 			{
+				job.numTry = 0;
 				releaseResLookup(kvsRetObj, 0);
 			}
 		}
@@ -423,13 +437,13 @@ public class PeerProtocol implements EDProtocol
 	public void cswapAllocResSuc(KVSReturnObj kvsRetObj)
 	{
 		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
-		System.out.println(job.ctrlBackup);
 		int pos = job.ctrls.indexOf(job.ctrlBackup);
 		if (pos == -1)
 		{
-			System.out.println("Now, I add a new controller!");
 			job.ctrls.add(job.ctrlBackup);
-			job.ctrlNodelist.add(job.resBackup);
+			Resource tmpRes = new Resource();
+			mergeResource(tmpRes, job.resBackup);
+			job.ctrlNodelist.add(tmpRes);
 		}
 		else
 		{
@@ -446,7 +460,6 @@ public class PeerProtocol implements EDProtocol
 		}
 		else
 		{
-			System.out.println("Now, start to do stuff");
 			if (numJobsStart < workload.size())
 			{
 				executeJob(new String());	//start to handle the next job
@@ -480,7 +493,6 @@ public class PeerProtocol implements EDProtocol
 		}
 		else
 		{
-			System.out.println("pos is:" + pos);
 			int next = 2 * pos + 1;
 			if (!left)
 			{
@@ -515,14 +527,9 @@ public class PeerProtocol implements EDProtocol
 	
 	public void launchJob(Job job)
 	{
-		System.out.println("start to launch jobs!");
 		Collections.sort(job.nodelist, new NodelistComp());
 		job.submitTime = CommonState.getTime();
 		Library.jobMetaData.put(job.jobId, job);
-		for (int i = 0; i < job.nodelist.size(); i++)
-		{
-			System.out.println("one node is:" + job.nodelist.get(i));
-		}
 		transmitJob(true, job, false);
 	}
 	
@@ -626,10 +633,10 @@ public class PeerProtocol implements EDProtocol
 				{
 					insertJobCtrlNodelist(kvsRetObj);
 				}
-				if (kvsRetObj.forWhat.equals("notify job fin"))
-				{
-					releaseResLookup(kvsRetObj, 1);
-				}
+				//if (kvsRetObj.forWhat.equals("notify job fin"))
+				//{
+				//	releaseResLookup(kvsRetObj, 1);
+				//}
 			}
 			else if (kvsRetObj.type.equals("lookup"))
 			{
@@ -661,7 +668,6 @@ public class PeerProtocol implements EDProtocol
 		Message ackMsg = new Message(id, msg.sourceId, "transmit job ack", job);
 		cdMaxFwdTime = updateTime(Library.sendOverhead, cdMaxFwdTime);
 		sendMsg(ackMsg, cdMaxFwdTime);
-		System.out.println("I am keep transmitting jobs!");
 		transmitJob(false, job, true);
 	}
 	
@@ -671,7 +677,6 @@ public class PeerProtocol implements EDProtocol
 		job.numNodeTransmitted++;
 		int srcPos = job.nodelist.indexOf("node-" + Integer.toString(msg.sourceId));
 		int curPos = job.nodelist.indexOf("node-" + Integer.toString(id));
-		System.out.println("srsProc is " + srcPos + ", and curPos is " + curPos);
 		long time = 0;
 		if (curPos >= 0 && srcPos > 0)
 		{
@@ -793,18 +798,17 @@ public class PeerProtocol implements EDProtocol
 		String originCtrl = (String)kvsRetObj.value;
 		if (originCtrl.equals("node-" + Integer.toString(id)))
 		{
-			numJobsFin++;
-			Library.numJobFinished++;
 			Job job = Library.jobMetaData.get(kvsRetObj.identifier);
 			job.backTime = ctrlMaxFwdTime;
-			releaseResLookup(kvsRetObj, 1);
+			//releaseResLookup(kvsRetObj, 1);
 		}
-		else
+		/*else
 		{
-			Pair pair = new Pair(kvsRetObj.identifier + "fin", "done", 
+			Pair pair = new Pair(kvsRetObj.identifier + "Fin", "done", 
 					null, kvsRetObj.identifier, "insert", "notify job fin");
 			kvsClientInteract(pair);
-		}
+		}*/
+		releaseResLookup(kvsRetObj,1);
 	}
 	
 	public void callbackSuc(KVSReturnObj kvsRetObj)

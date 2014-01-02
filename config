@@ -13,17 +13,17 @@ protocol.tr UniformRandomTransport
 protocol.peer PeerProtocol
 {
     transport tr
-    partSize 10
+    partSize 1
     sleepLength 1000
     callbackInterval 1000
     callbackNumTry 3
-    maxNumTry 3
+    maxNumTry 5
 }
 
 init.create NetInit
 {
     protocol peer
-    partSize 10
+    partSize 1
     netSpeed 1000000000
     latency 100
     sendOverhead 50

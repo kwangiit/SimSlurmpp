@@ -1,5 +1,5 @@
 import java.io.*;
-import java.util.HashMap;
+import java.util.*;
 
 public class Library 
 {
@@ -13,9 +13,17 @@ public class Library
 	public static int preNoJobFinished;
 	public static int numJobFinished;
 	public static int numAllJobs;
+	public static int numJobsPerCtrl;
 	public static long numAllMsg;
 	
+	public static String[] memList;
+	public static ArrayList<String> workload;
+	
 	public static HashMap<String, Job> jobMetaData;
+	
+	public static BufferedWriter bwThroughput;
+	public static BufferedWriter bwTaskDetail;
+	public static BufferedWriter bwStatInfo;
 	
 	public static byte[] serialize(Object obj)
 	{
@@ -35,5 +43,36 @@ public class Library
 	public static  long getCommOverhead(int msgSize)
 	{
 		return msgSize * 8L * 1000000L / Library.netSpeed + Library.latency;
+	}
+	
+	public static void outputTaskDetail(int numCtrls, int partSize, int numJobsPerPart)
+	{
+		try
+		{
+			bwTaskDetail.write("JobId\tStartTime\tSubmissionTime\t" +
+				"ExecuteTime\tFinishTime\tResultBackTime\r\n");
+			for (int i = 0; i < numCtrls; i++)
+			{
+				String ctrlId = "node-" + Integer.toString(i * partSize);
+				for (int j = 0; j < numJobsPerPart; j++)
+				{
+					String jobId = ctrlId + " " + Integer.toString(j);
+					Job job = jobMetaData.get(jobId);
+					long startTime;
+					long submitTime;
+					long exeTime;
+					long finTime;
+					long backTime;
+					bwTaskDetail.write(jobId + "\t" + job.startTime + "\t" + job.submitTime + "\t" + 
+					               job.exeTime + "\t" + job.finTime + "\t" + job.backTime + "\r\n");
+				}
+			}
+			bwTaskDetail.flush();
+			bwTaskDetail.close();
+		}
+		catch (IOException e)
+		{
+			e.printStackTrace();
+		}
 	}
 }

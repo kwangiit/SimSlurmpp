@@ -41,12 +41,10 @@ public class PeerProtocol implements EDProtocol
 	public long msgCount;
 	public HashMap<Object, Object> hmData;
 	public int numCDRegist;
-	public String[] memList;
 	public Resource res;
-	public int numJobs;
+	public int jobStartIndex;
 	public int numJobsStart;
 	public int numJobsFin;
-	public ArrayList<String> workload;
 	public double throughput;
 	
 	public HashMap<String, Integer> callbackHM;
@@ -94,7 +92,7 @@ public class PeerProtocol implements EDProtocol
 	public int hashServer(Object key)
 	{
 		int hashCode = Math.abs(key.hashCode());
-		return hashCode % memList.length;
+		return hashCode % Library.memList.length;
 	}
 	
 	public void sendMsg(Message msg, long time)
@@ -121,15 +119,32 @@ public class PeerProtocol implements EDProtocol
 	
 	public void printOutResult()
 	{
-		if (numJobsFin == workload.size())
+		if (numJobsFin == Library.numJobsPerCtrl)
 		{
-			System.out.println("The throughput of controller " + id + " is:" + (double)numJobsFin 
-					/ (double)ctrlMaxFwdTime * 1E6);
+			try
+			{
+				Library.bwThroughput.write("The throughput of controller " + id + " is:" + 
+					(double)numJobsFin / (double)ctrlMaxFwdTime * 1E6 + "\r\n");
+			}
+			catch (IOException e)
+			{
+				e.printStackTrace();
+			}
 		}
 		if (Library.numJobFinished == Library.numAllJobs)
 		{
-			System.out.println("The overall throughput is:" + (double)Library.numAllJobs
-					/ (double)ctrlMaxFwdTime * 1E6);
+			try
+			{
+				Library.bwThroughput.write("The overall throughput is:" + (double)Library.numAllJobs
+					/ (double)ctrlMaxFwdTime * 1E6 + "\r\n");
+				Library.bwThroughput.flush();
+				Library.bwThroughput.close();
+			}
+			catch (IOException e)
+			{
+				e.printStackTrace();
+			}
+			Library.outputTaskDetail(Network.size() / partSize, partSize, Library.numJobsPerCtrl);
 		}
 	}
 	
@@ -287,7 +302,7 @@ public class PeerProtocol implements EDProtocol
 		if (jobId.isEmpty())
 		{
 			ctrlMaxProcTime = updateTime(Library.jobProcTime, ctrlMaxProcTime);
-			String[] jobArray = parseJob(workload.get(numJobsStart));
+			String[] jobArray = parseJob(Library.workload.get(numJobsStart + jobStartIndex));
 			Job job = createJob(jobArray);
 			jobId = job.jobId;
 		}
@@ -313,7 +328,7 @@ public class PeerProtocol implements EDProtocol
 	
 	public void randSelect(String identifier)
 	{
-		String anoCtrlId = memList[CommonState.r.nextInt(memList.length)];
+		String anoCtrlId = Library.memList[CommonState.r.nextInt(Library.memList.length)];
 		Pair resPair = new Pair(anoCtrlId, null, null, identifier, "lookup", "lookup resource");
 		kvsClientInteract(resPair);
 	}
@@ -331,21 +346,11 @@ public class PeerProtocol implements EDProtocol
 			Pair pair = new Pair(firstCtrl, null, null, job.jobId, 
 								"lookup", "release resource" + Integer.toString(i));
 			kvsClientInteract(pair);
-			for (int j = 0; j < job.ctrls.size(); j++)
-			{
-				System.out.println(job.ctrls.get(j));
-			}
 		}
 		else 
 		{
-			System.out.println("the job id is:" + job.jobId + "number of jobs fin is:" + numJobsFin + "current node is:" + id + "key is:" + kvsRetObj.key);
 			if (job.nodelist.size() > 0)
 			{
-				for (int j = 0; j < job.nodelist.size(); j++)
-				{
-					System.out.println("job node list is:" + job.nodelist.get(j));
-				}
-				System.out.println();
 				job.nodelist.clear();
 			}
 			if (i == 0)
@@ -358,7 +363,6 @@ public class PeerProtocol implements EDProtocol
 				int jobClientId = Integer.parseInt(job.jobId.split(" ")[0].substring(5));
 				if (id == jobClientId)
 				{
-					System.out.println(id + "\t" + jobClientId + "\t" + job.jobId);
 					numJobsFin++;
 					Library.numJobFinished++;
 					printOutResult();
@@ -460,7 +464,7 @@ public class PeerProtocol implements EDProtocol
 		}
 		else
 		{
-			if (numJobsStart < workload.size())
+			if (numJobsStart < Library.numJobsPerCtrl)
 			{
 				executeJob(new String());	//start to handle the next job
 			}
@@ -815,9 +819,9 @@ public class PeerProtocol implements EDProtocol
 	{
 		numJobsFin++;
 		Library.numJobFinished++;
-		printOutResult();
 		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
 		job.backTime = ctrlMaxFwdTime;
+		printOutResult();
 	}
 
 	public void processEvent(Node node, int pid, Object event)

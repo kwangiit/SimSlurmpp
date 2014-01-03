@@ -49,21 +49,17 @@ public class NetInit implements Control
 		
 		Library.preNoJobFinished = 0;
 		Library.numJobFinished = 0;
-		//public static int numAllJobs;
 		Library.numAllMsg = 0;
 		Library.jobMetaData = new HashMap<String, Job>();
-	}
-	
-	public void initPeer()
-	{
-		ArrayList<String> workloadAL = new ArrayList<String>();
+		
+		Library.workload = new ArrayList<String>();
 		try
 		{
 			BufferedReader br = new BufferedReader(new FileReader(workloadFile));
 			String str = br.readLine();
 			while (str != null)
 			{
-				workloadAL.add(str);
+				Library.workload.add(str);
 				str = br.readLine();
 			}
 		}
@@ -71,10 +67,34 @@ public class NetInit implements Control
 		{
 			e.printStackTrace();
 		}
-		Library.numAllJobs = workloadAL.size();
+		Library.numAllJobs = Library.workload.size();
+		
 		int numNode = Network.size();
 		int numPart = numNode / partSize;
-		int numJobPerCtrl = workloadAL.size() / numPart;
+		Library.numJobsPerCtrl =  Library.numAllJobs / numPart; 
+		
+		try
+		{
+			String suffix = numPart + "_" + partSize + "_" + Library.numJobsPerCtrl;
+			Library.bwThroughput = new BufferedWriter(new FileWriter("output/throughput_" + suffix));
+			Library.bwTaskDetail = new BufferedWriter(new FileWriter("output/job_" + suffix));
+		}
+		catch (IOException e)
+		{
+			e.printStackTrace();
+		}
+		
+		Library.memList = new String[numPart];
+		for (int i = 0; i < numPart; i++)
+		{
+			Library.memList[i] = "node-" + Integer.toString(i * partSize);
+		}
+	}
+	
+	public void initPeer()
+	{
+		int numNode = Network.size();
+		int numPart = numNode / partSize;
 		
 		for (int i = 0; i < numNode; i++)
 		{
@@ -91,20 +111,10 @@ public class NetInit implements Control
 				pp.msgCount = 0;
 				pp.hmData = new HashMap<Object, Object>();
 				pp.numCDRegist = 0;
-				pp.memList = new String[numPart];
-				for (int j = 0; j < numPart; j++)
-				{
-					pp.memList[j] = "node-" + Integer.toString(j * partSize);
-				}
 				pp.res = new Resource();
-				pp.numJobs = numJobPerCtrl;
+				pp.jobStartIndex = i * Library.numJobsPerCtrl;
 				pp.numJobsStart = 0;
 				pp.numJobsFin = 0;
-				pp.workload = new ArrayList<String>();
-				for (int j = 0; j < numJobPerCtrl; j++)
-				{
-					pp.workload.add(workloadAL.get(i / partSize * numJobPerCtrl + j));
-				}
 				pp.throughput = 0;
 				pp.callbackHM = new HashMap<String, Integer>();
 			}

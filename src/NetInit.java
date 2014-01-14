@@ -50,6 +50,11 @@ public class NetInit implements Control
 		Library.preNoJobFinished = 0;
 		Library.numJobFinished = 0;
 		Library.numAllMsg = 0;
+		Library.numInsertMsg = 0;
+		Library.numLookupMsg = 0;
+		Library.numCswapMsg = 0;
+		Library.numCallbackMsg = 0;
+		
 		Library.jobMetaData = new HashMap<String, Job>();
 		
 		Library.workload = new ArrayList<String>();
@@ -112,7 +117,7 @@ public class NetInit implements Control
 				pp.hmData = new HashMap<Object, Object>();
 				pp.numCDRegist = 0;
 				pp.res = new Resource();
-				pp.jobStartIndex = i * Library.numJobsPerCtrl;
+				pp.jobStartIndex = i / partSize * Library.numJobsPerCtrl;
 				pp.numJobsStart = 0;
 				pp.numJobsFin = 0;
 				pp.throughput = 0;

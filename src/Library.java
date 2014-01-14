@@ -15,6 +15,10 @@ public class Library
 	public static int numAllJobs;
 	public static int numJobsPerCtrl;
 	public static long numAllMsg;
+	public static long numInsertMsg;
+	public static long numLookupMsg;
+	public static long numCswapMsg;
+	public static long numCallbackMsg;
 	
 	public static String[] memList;
 	public static ArrayList<String> workload;

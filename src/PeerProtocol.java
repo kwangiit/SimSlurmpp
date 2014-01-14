@@ -92,7 +92,8 @@ public class PeerProtocol implements EDProtocol
 	public int hashServer(Object key)
 	{
 		int hashCode = Math.abs(key.hashCode());
-		return hashCode % Library.memList.length;
+		String server = Library.memList[hashCode % Library.memList.length];
+		return Integer.parseInt(server.substring(5));
 	}
 	
 	public void sendMsg(Message msg, long time)
@@ -135,8 +136,19 @@ public class PeerProtocol implements EDProtocol
 		{
 			try
 			{
-				Library.bwThroughput.write("The overall throughput is:" + (double)Library.numAllJobs
-					/ (double)ctrlMaxFwdTime * 1E6 + "\r\n");
+				Library.bwThroughput.write("The overall throughput is:" + (double)
+						Library.numAllJobs / (double)ctrlMaxFwdTime * 1E6 + "\r\n");
+				Library.bwThroughput.write("The number of insert message is:" + 
+						Library.numInsertMsg + "\r\n");
+				Library.bwThroughput.write("The number of lookup message is:" + 
+						Library.numLookupMsg + "\r\n");
+				Library.bwThroughput.write("The number of compare and swap message is:" + 
+						Library.numCswapMsg + "\r\n");
+				Library.bwThroughput.write("The number of callback message is:" + 
+						Library.numCallbackMsg + "\r\n");
+				Library.bwThroughput.write("The number of all ZHT message is:" + 
+						(Library.numInsertMsg + Library.numLookupMsg + 
+						 Library.numCswapMsg + Library.numCallbackMsg) + "\r\n");
 				Library.bwThroughput.flush();
 				Library.bwThroughput.close();
 			}
@@ -156,6 +168,7 @@ public class PeerProtocol implements EDProtocol
 		res.nodeLL.add((String)registMsg.content);
 		if (numCDRegist == partSize)
 		{
+			
 			String key = "node-" + Integer.toString(id);
 			Pair resPair = new Pair(key, res, null, null, "insert", "insert resource");
 			kvsClientInteract(resPair);
@@ -171,17 +184,20 @@ public class PeerProtocol implements EDProtocol
 		kvsRetObj.forWhat = pair.forWhat;
 		if (pair.type.equals("insert"))
 		{
+			Library.numInsertMsg++;
 			hmData.put(pair.key, pair.value);
 			kvsRetObj.value = pair.value;
 			kvsRetObj.result = true;
 		}
 		else if (pair.type.equals("lookup"))
 		{
+			Library.numLookupMsg++;
 			kvsRetObj.value = hmData.get(pair.key);
 			kvsRetObj.result = true;
 		}
 		else if (pair.type.equals("compare and swap"))
 		{
+			Library.numCswapMsg++;
 			Resource cur = (Resource)hmData.get(pair.key);
 			if (cur.comResource((Resource)pair.value) == 0)
 			{
@@ -196,6 +212,7 @@ public class PeerProtocol implements EDProtocol
 		}
 		else if (pair.type.equals("callback"))
 		{
+			Library.numCallbackMsg++;
 			if (!callbackHM.containsKey(pair.key))
 			{
 				callbackHM.put((String)pair.key, 1);
@@ -349,6 +366,7 @@ public class PeerProtocol implements EDProtocol
 		}
 		else 
 		{
+			
 			if (job.nodelist.size() > 0)
 			{
 				job.nodelist.clear();
@@ -363,6 +381,7 @@ public class PeerProtocol implements EDProtocol
 				int jobClientId = Integer.parseInt(job.jobId.split(" ")[0].substring(5));
 				if (id == jobClientId)
 				{
+					job.backTime = ctrlMaxFwdTime;
 					numJobsFin++;
 					Library.numJobFinished++;
 					printOutResult();
@@ -472,11 +491,42 @@ public class PeerProtocol implements EDProtocol
 		}
 	}
 	
+	public void insertSelfHereMsg(KVSReturnObj kvsRetObj)
+	{
+		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
+		int flag = 0, selfInv = 0;
+		for (; flag < job.ctrls.size(); flag++)
+		{
+			int target = Integer.parseInt(job.ctrls.get(flag).substring(5));
+			if (target < id)
+			{
+				break;
+			}
+			else
+			{
+				if (target == id)
+				{
+					selfInv = 1;
+				}
+			}
+		}
+		if (flag == job.ctrls.size() && selfInv == 1)
+		{
+			String key = job.jobId + "node-" + Integer.toString(id);
+			Pair pair = new Pair(key, "I am here", null, job.jobId, "insert", "mark self");
+			kvsClientInteract(pair);
+		}
+		else
+		{
+			insertJobCtrls(kvsRetObj);
+		}
+	}
+	
 	/* insert (jobid + origin controller id, involved controller list) */
 	public void insertJobCtrls(KVSReturnObj kvsRetObj)
 	{
 		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
-		String key = job.jobId + "node-" + Integer.toString(id);
+		String key = job.jobId + "node-" + Integer.toString(id) + "ctrls";
 		Pair jobCtrlsPair = new Pair(key, job.ctrls, null, job.jobId, "insert", "job ctrls");
 		kvsClientInteract(jobCtrlsPair);
 	}
@@ -627,6 +677,11 @@ public class PeerProtocol implements EDProtocol
 				}
 				if (kvsRetObj.forWhat.equals("job origin ctrl"))
 				{
+					insertSelfHereMsg(kvsRetObj);
+					//insertJobCtrls(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.equals("mark self"))
+				{
 					insertJobCtrls(kvsRetObj);
 				}
 				if (kvsRetObj.forWhat.equals("job ctrls"))	// This is where I left last time
@@ -652,9 +707,21 @@ public class PeerProtocol implements EDProtocol
 				{
 					releaseResCswap(kvsRetObj);
 				}
+				if (kvsRetObj.forWhat.equals("mark self"))
+				{
+					markSelfRet(kvsRetObj);
+				}
 				if (kvsRetObj.forWhat.equals("job origin ctrl"))
 				{
 					jobOriginCtrlMsgProc(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.equals("job ctrls"))
+				{
+					lookupJobCtrlNodelist(kvsRetObj);
+				}
+				if (kvsRetObj.forWhat.equals("job ctrl nodelist"))
+				{
+					lookupJobCtrlNodelist(kvsRetObj);
 				}
 			}
 			else if (kvsRetObj.type.equals("callback"))
@@ -700,18 +767,24 @@ public class PeerProtocol implements EDProtocol
 						job.nodelist.get(i).substring(5)), "execute job", job);
 				sendMsg(execJobMsg, time);
 			}
-			int firstNodeId = Integer.parseInt(job.nodelist.getFirst().substring(5));
-			Node node = Network.get(firstNodeId);
-			PeerProtocol pp = (PeerProtocol)node.getProtocol(par.pid);
-			int jobClientId = Integer.parseInt(job.jobId.split(" ")[0].substring(5));
-			if (pp.ctrlId != jobClientId)
-			{
-				Pair pair = new Pair(job.jobId + "Fin", null, null, 
-						job.jobId, "callback", "wait for notification");
-				int destId = hashServer(pair.key);
-				Message callbackMsg = new Message(jobClientId, destId, "kvs", pair);
-				sendMsg(callbackMsg, time);
-			}
+			//int firstNodeId = Integer.parseInt(job.nodelist.getFirst().substring(5));
+			//Node node = Network.get(firstNodeId);
+			//PeerProtocol pp = (PeerProtocol)node.getProtocol(par.pid);
+			String jobClient = job.jobId.split(" ")[0];
+			int jobClientId = Integer.parseInt(jobClient.substring(5));
+			//if (pp.ctrlId != jobClientId)
+			//{
+			//	Pair pair = new Pair(job.jobId + "Fin", null, null, 
+			//			job.jobId, "callback", "wait for notification");
+			//	int destId = hashServer(pair.key);
+			//	Message callbackMsg = new Message(jobClientId, destId, "kvs", pair);
+			//	sendMsg(callbackMsg, time);
+			//}
+			Pair pair = new Pair(job.jobId + jobClient, null, null, 
+								job.jobId, "lookup", "mark self");
+			int destId = hashServer(pair.key);
+			Message lookupMsg = new Message(jobClientId, destId, "kvs", pair);
+			sendMsg(lookupMsg, time);
 		}
 		else
 		{
@@ -796,23 +869,66 @@ public class PeerProtocol implements EDProtocol
 		kvsClientInteract(pair);
 	}
 	
+	public void markSelfRet(KVSReturnObj kvsRetObj)
+	{
+		String selfHere = (String)kvsRetObj.value;
+		if (selfHere == null || !selfHere.equals("I am here"))
+		{
+			Pair pair = new Pair(kvsRetObj.identifier + "Fin", null, null, kvsRetObj.identifier, 
+								  "callback", "wait for notification");
+			kvsClientInteract(pair);
+		}
+	}
+	
 	public void jobOriginCtrlMsgProc(KVSReturnObj kvsRetObj)
 	{
-		ctrlMaxFwdTime = updateTime(Library.recvOverhead, ctrlMaxFwdTime);
 		String originCtrl = (String)kvsRetObj.value;
-		if (originCtrl.equals("node-" + Integer.toString(id)))
-		{
-			Job job = Library.jobMetaData.get(kvsRetObj.identifier);
-			job.backTime = ctrlMaxFwdTime;
+		Pair pair = new Pair(kvsRetObj.identifier + originCtrl + "ctrls", null, null, 
+				              kvsRetObj.identifier, "lookup", "job ctrls");
+		kvsClientInteract(pair);
+		//if (originCtrl.equals("node-" + Integer.toString(id)))
+		//{
+		//	Job job = Library.jobMetaData.get(kvsRetObj.identifier);
+		//	job.backTime = ctrlMaxFwdTime;
 			//releaseResLookup(kvsRetObj, 1);
-		}
+		//}
 		/*else
 		{
 			Pair pair = new Pair(kvsRetObj.identifier + "Fin", "done", 
 					null, kvsRetObj.identifier, "insert", "notify job fin");
 			kvsClientInteract(pair);
 		}*/
-		releaseResLookup(kvsRetObj,1);
+		//releaseResLookup(kvsRetObj,1);
+	}
+	
+	public void lookupJobCtrlNodelist(KVSReturnObj kvsRetObj)
+	{
+		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
+		String key = job.jobId + job.jobId.split(" ")[0];
+		if (kvsRetObj.forWhat.equals("job ctrls"))	// if this is the fisrt controller
+		{
+			key += job.ctrls.get(0);
+			Pair pair = new Pair(key, null, null, job.jobId, "lookup", "job ctrl nodelist");
+			kvsClientInteract(pair);
+		}
+		else
+		{
+			/* find the current controller, and insert the next one */
+			Resource lastRes = (Resource)kvsRetObj.value;
+			int pos = job.ctrlNodelist.indexOf(lastRes);
+			if (pos < job.ctrlNodelist.size() - 1 && pos >=0 )
+			{
+				pos++;
+				key += job.ctrls.get(pos);
+				Pair pair = new Pair(key, null, null, job.jobId, 
+									"lookup", "job ctrl nodelist");
+				kvsClientInteract(pair);
+			}
+			else	// if this is the last controller, then can launch the job
+			{
+				releaseResLookup(kvsRetObj,1);
+			}
+		}		
 	}
 	
 	public void callbackSuc(KVSReturnObj kvsRetObj)

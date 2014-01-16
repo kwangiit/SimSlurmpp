@@ -418,7 +418,9 @@ public class PeerProtocol implements EDProtocol
 			job.numTry++;
 			if (job.numTry < maxNumTry)
 			{
-				randSelect(job.jobId);
+				Message msg = new Message(id, id, "retry", job.jobId);
+				EDSimulator.add(sleepLength, msg, Network.get(id), par.pid);
+				//randSelect(job.jobId);
 			}
 			else
 			{
@@ -944,7 +946,9 @@ public class PeerProtocol implements EDProtocol
 	{
 		Message msg = (Message)event;
 		boolean increment = false;
-		if (!msg.msgType.equals("reallocation") && !msg.msgType.equals("execute job"))
+		if (!msg.msgType.equals("reallocation") &&
+			!msg.msgType.equals("retry") &&
+		    !msg.msgType.equals("execute job"))
 		{
 			if (msg.msgType.equals("kvs"))
 			{
@@ -975,6 +979,10 @@ public class PeerProtocol implements EDProtocol
 		else if (msg.msgType.equals("kvs return"))
 		{
 			procKVSRetEvent(msg);
+		}
+		else if (msg.msgType.equals("retry"))
+		{
+			randSelect((String)msg.content);
 		}
 		else if (msg.msgType.equals("reallocation"))
 		{

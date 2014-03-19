@@ -383,6 +383,7 @@ public class PeerProtocol implements EDProtocol
 				{
 					job.backTime = ctrlMaxFwdTime;
 					numJobsFin++;
+					System.out.println("Number of jobs finished is:" + numJobsFin);
 					Library.numJobFinished++;
 					printOutResult();
 				}
@@ -819,7 +820,7 @@ public class PeerProtocol implements EDProtocol
 		{
 			job.exeTime = CommonState.getTime();
 		}
-		long startTime = System.nanoTime();
+		//long startTime = System.nanoTime();
 		/*final Runtime rt = Runtime.getRuntime();
 		try 
 		{
@@ -829,16 +830,20 @@ public class PeerProtocol implements EDProtocol
 		{
 			e.printStackTrace();
 		}*/
-		try
-		{
-			Thread.sleep(Long.parseLong(job.argv) * 1000);
-		}
-		catch (InterruptedException e)
-		{
-			e.printStackTrace();
-		}
-		long endTime = System.nanoTime();
-		long procTime = (endTime - startTime) / 1000;
+//		try
+//		{
+//			double length = Double.parseDouble(job.argv) * 1000;
+//			long mLength = (long)length;
+//			int nLength = (int)((length - mLength) * 1000000);
+//			Thread.sleep(mLength, nLength);
+//		}
+//		catch (InterruptedException e)
+//		{
+//			e.printStackTrace();
+//		}
+		//long endTime = System.nanoTime();
+		//long procTime = (endTime - startTime) / 1000;
+		long procTime = (long)(Double.parseDouble(job.argv) * 1000000);
 		cdMaxProcTime = updateTime(procTime, cdMaxProcTime);
 		cdMaxFwdTime = timeCompOverride(cdMaxFwdTime, cdMaxProcTime);
 		int pos = job.nodelist.indexOf("node-" + Integer.toString(id));
@@ -936,6 +941,7 @@ public class PeerProtocol implements EDProtocol
 	public void callbackSuc(KVSReturnObj kvsRetObj)
 	{
 		numJobsFin++;
+		System.out.println("Number of jobs finished is:" + numJobsFin);
 		Library.numJobFinished++;
 		Job job = Library.jobMetaData.get(kvsRetObj.identifier);
 		job.backTime = ctrlMaxFwdTime;

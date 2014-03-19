@@ -22,7 +22,8 @@ rm -rf $wFile
 for i in `seq 1 $nAllJob` 
 do
 	num=$RANDOM
-	num=$(($num%2))
+	num=$(($num%$nNode))
+	num=$(($num/2))
 	num=$(($num+1))
 	echo "srun -N$num /bin/ sleep 0" >> $wFile	    
 done
